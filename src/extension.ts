@@ -44,6 +44,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('remarkableExplorer.backup', (item) => remarkableExplorer.backup(item)),
         vscode.commands.registerCommand('remarkableExplorer.rename', (item) => remarkableExplorer.rename(item)),
         vscode.commands.registerCommand('remarkableExplorer.export', (item) => remarkableExplorer.export(item)),
+        vscode.commands.registerCommand('remarkableExplorer.preview', (item) => remarkableExplorer.preview(item)),
         vscode.commands.registerCommand('remarkableExplorer.openSettings', () => {
             vscode.commands.executeCommand('workbench.action.openSettings', 'remarkableManager');
         })

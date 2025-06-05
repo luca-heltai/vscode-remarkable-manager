@@ -64,6 +64,11 @@
         "icon": "$(export)"
       },
       {
+        "command": "remarkableExplorer.preview",
+        "title": "Preview",
+        "icon": "$(eye)"
+      },
+      {
         "command": "remarkableExplorer.openSettings",
         "title": "Settings",
         "icon": "$(settings-gear)"
@@ -99,19 +104,24 @@
       ],
       "view/item/context": [
         {
-          "command": "remarkableExplorer.backup",
+          "command": "remarkableExplorer.preview",
           "when": "view == remarkableExplorer && viewItem == document",
           "group": "remarkable@1"
         },
         {
-          "command": "remarkableExplorer.rename",
+          "command": "remarkableExplorer.backup",
           "when": "view == remarkableExplorer && viewItem == document",
           "group": "remarkable@2"
         },
         {
-          "command": "remarkableExplorer.export",
+          "command": "remarkableExplorer.rename",
           "when": "view == remarkableExplorer && viewItem == document",
           "group": "remarkable@3"
+        },
+        {
+          "command": "remarkableExplorer.export",
+          "when": "view == remarkableExplorer && viewItem == document",
+          "group": "remarkable@4"
         }
       ]
     },
@@ -152,6 +162,16 @@
           "type": "boolean",
           "default": false,
           "description": "Show raw GUID-based file structure instead of parsed names"
+        },
+        "remarkableManager.preview.autoPreview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically preview documents when clicked in the tree view"
+        },
+        "remarkableManager.preview.useVSCodePreview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use VS Code's built-in preview capabilities when possible"
         }
       }
     }

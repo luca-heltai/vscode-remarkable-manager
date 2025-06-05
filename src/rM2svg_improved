@@ -1,0 +1,333 @@
+#!/usr/bin/env python3
+#
+# Improved Script for converting reMarkable tablet ".rm" files to SVG image.
+# Based on the original rM2svg with enhanced error handling and version support
+#
+
+import sys
+import struct
+import os.path
+import argparse
+import re
+
+
+__prog_name__ = "rm2svg_improved"
+__version__ = "0.0.3"
+
+
+# Size
+default_x_width = 1404
+default_y_width = 1872
+
+# Mappings
+stroke_colour = {
+    0: "black",
+    1: "grey",
+    2: "white",
+    3: "yellow"  # for colored annotations
+}
+
+
+def main():
+    parser = argparse.ArgumentParser(prog=__prog_name__)
+    parser.add_argument('--height',
+                        help='Desired height of image',
+                        type=float,
+                        default=default_y_width)
+    parser.add_argument('--width',
+                        help='Desired width of image',
+                        type=float,
+                        default=default_x_width)
+    parser.add_argument("-i",
+                        "--input",
+                        help=".rm input file",
+                        required=True,
+                        metavar="FILENAME")
+    parser.add_argument("-o",
+                        "--output",
+                        help="output SVG file",
+                        required=True,
+                        metavar="NAME")
+    parser.add_argument("-c",
+                        "--coloured_annotations",
+                        help="Colour annotations for document markup.",
+                        action='store_true')
+    parser.add_argument("-v",
+                        "--verbose",
+                        help="Verbose output for debugging",
+                        action='store_true')
+    parser.add_argument('--version',
+                        action='version',
+                        version='%(prog)s {version}'.format(version=__version__))
+    args = parser.parse_args()
+
+    if not os.path.exists(args.input):
+        parser.error('The file "{}" does not exist!'.format(args.input))
+
+    if args.coloured_annotations:
+        set_coloured_annots()
+
+    try:
+        rm2svg(args.input, args.output, args.coloured_annotations,
+               args.width, args.height, args.verbose)
+    except Exception as e:
+        print(f"Error converting file: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def set_coloured_annots():
+    global stroke_colour
+    stroke_colour = {
+        0: "blue",
+        1: "red",
+        2: "white",
+        3: "yellow"
+    }
+
+
+def abort(msg):
+    print(msg, file=sys.stderr)
+    sys.exit(1)
+
+
+def rm2svg(input_file, output_name, coloured_annotations=False,
+           x_width=default_x_width, y_width=default_y_width, verbose=False):
+
+    if coloured_annotations:
+        set_coloured_annots()
+
+    # Read the file
+    try:
+        with open(input_file, 'rb') as f:
+            data = f.read()
+    except Exception as e:
+        abort(f'Failed to read input file: {e}')
+
+    if verbose:
+        print(f"File size: {len(data)} bytes", file=sys.stderr)
+
+    offset = 0
+
+    # Check if this is a reMarkable .lines file
+    expected_header = b'reMarkable .lines file, version=#          '
+    if len(data) < len(expected_header) + 4:
+        abort(
+            f'File too short to be a valid .rm file. Expected at least {len(expected_header) + 4} bytes, got {len(data)}')
+
+    fmt = '<{}sI'.format(len(expected_header))
+    try:
+        header, nlayers = struct.unpack_from(fmt, data, offset)
+        offset += struct.calcsize(fmt)
+    except struct.error as e:
+        abort(f'Failed to unpack header: {e}')
+
+    if verbose:
+        print(f'Raw header: {header}', file=sys.stderr)
+        print(
+            f'Header as string: {header.decode("utf-8", errors="replace")}', file=sys.stderr)
+        print(f'Number of layers: {nlayers}', file=sys.stderr)
+
+    # Try to match header and extract version
+    header_str = header.decode('utf-8', errors='replace')
+    re_expected_header = r"^reMarkable \.lines file, version=([0-9]+)\s*$"
+    re_expected_header_match = re.match(re_expected_header, header_str)
+
+    if not re_expected_header_match:
+        # Try a more flexible pattern
+        alt_pattern = r"reMarkable.*version=([0-9]+)"
+        alt_match = re.search(alt_pattern, header_str)
+        if alt_match:
+            re_expected_header_match = alt_match
+            if verbose:
+                print(f"Matched with alternative pattern", file=sys.stderr)
+        else:
+            abort(f'Not a valid reMarkable file. Header: "{header_str}"')
+
+    if nlayers < 1:
+        abort(f'Invalid number of layers: {nlayers}')
+
+    # Validate nlayers is reasonable (reMarkable files typically have 1-10 layers)
+    if nlayers > 100:
+        if verbose:
+            print(
+                f'Warning: Suspicious number of layers ({nlayers}). File may be corrupted. Limiting to 10 layers.', file=sys.stderr)
+        nlayers = min(nlayers, 10)
+
+    version = re_expected_header_match.group(1)
+    if verbose:
+        print(f'Detected version: {version}', file=sys.stderr)
+
+    # Define stroke formats for different versions
+    _stroke_fmt_by_vers = {
+        '3': '<IIIfI',
+        '4': '<IIIfI',
+        '5': '<IIIfII',
+        '6': '<IIIfII'  # Add support for version 6
+    }
+
+    if version not in _stroke_fmt_by_vers:
+        # Try to use version 5 format as default for unknown versions
+        print(
+            f"Warning: Unknown version {version}, trying version 5 format", file=sys.stderr)
+        version = '5'
+
+    _stroke_fmt = _stroke_fmt_by_vers[version]
+
+    try:
+        with open(output_name, 'w') as output:
+            output.write(
+                '<svg xmlns="http://www.w3.org/2000/svg" height="{}" width="{}">'.format(y_width, x_width))
+
+            # Iterate through layers
+            for layer in range(nlayers):
+                if verbose:
+                    print(
+                        f'Processing layer {layer + 1}/{nlayers}', file=sys.stderr)
+
+                fmt = '<I'
+                try:
+                    (nstrokes,) = struct.unpack_from(fmt, data, offset)
+                    offset += struct.calcsize(fmt)
+                except struct.error as e:
+                    if verbose:
+                        print(
+                            f'Warning: Failed to read number of strokes in layer {layer}: {e}. Stopping at layer {layer}.', file=sys.stderr)
+                    break
+
+                # Validate nstrokes is reasonable
+                if nstrokes > 1000000:  # 1 million strokes is already very high
+                    if verbose:
+                        print(
+                            f'Warning: Layer {layer} claims to have {nstrokes} strokes, which seems corrupted. Skipping this layer.', file=sys.stderr)
+                    continue
+
+                if verbose:
+                    print(f'Layer {layer} has {nstrokes} strokes',
+                          file=sys.stderr)
+
+                # Iterate through strokes
+                for stroke in range(nstrokes):
+                    stroke_size = struct.calcsize(_stroke_fmt)
+
+                    # Check if we have enough data for the stroke header
+                    if offset + stroke_size > len(data):
+                        if verbose:
+                            print(
+                                f'Warning: Not enough data for stroke {stroke} header in layer {layer}. Expected {stroke_size} bytes at offset {offset}, but file only has {len(data)} bytes. Skipping remaining strokes.', file=sys.stderr)
+                        break
+
+                    try:
+                        stroke_data = struct.unpack_from(
+                            _stroke_fmt, data, offset)
+                        offset += stroke_size
+                    except struct.error as e:
+                        if verbose:
+                            print(
+                                f'Warning: Failed to read stroke {stroke} in layer {layer}: {e}. Skipping remaining strokes.', file=sys.stderr)
+                        break
+
+                    pen, colour, i_unk, width = stroke_data[:4]
+                    nsegments = stroke_data[-1]
+
+                    if verbose and stroke == 0:
+                        print(
+                            f'First stroke: pen={pen}, colour={colour}, width={width}, segments={nsegments}', file=sys.stderr)
+
+                    # Calculate pen width and opacity
+                    opacity = 1
+                    if pen == 0 or pen == 1:
+                        pass  # Dynamic width
+                    elif pen == 2 or pen == 4:  # Pen / Fineliner
+                        width = 32 * width * width - 116 * width + 107
+                    elif pen == 3:  # Marker
+                        width = 64 * width - 112
+                        opacity = 0.9
+                    elif pen == 5:  # Highlighter
+                        width = 30
+                        opacity = 0.2
+                        if coloured_annotations:
+                            colour = 3
+                    elif pen == 6:  # Eraser
+                        width = 1280 * width * width - 4800 * width + 4510
+                        colour = 2
+                    elif pen == 7:  # Pencil-Sharp
+                        width = 16 * width - 27
+                        opacity = 0.9
+                    elif pen == 8:  # Erase area
+                        opacity = 0.
+                    else:
+                        if verbose:
+                            print(f'Unknown pen type: {pen}', file=sys.stderr)
+                        opacity = 0.
+
+                    width /= 2.3  # adjust for transformation to A4
+
+                    # Ensure colour is valid
+                    if colour not in stroke_colour:
+                        colour = 0  # default to black
+
+                    output.write('<polyline style="fill:none;stroke:{};stroke-width:{:.3f};opacity:{}" points="'.format(
+                        stroke_colour[colour], width, opacity))
+
+                    # Process segments
+                    for segment in range(nsegments):
+                        fmt = '<ffffff'
+                        segment_size = struct.calcsize(fmt)
+
+                        # Check if we have enough data remaining
+                        if offset + segment_size > len(data):
+                            if verbose:
+                                print(
+                                    f'Warning: Not enough data for segment {segment} of stroke {stroke} in layer {layer}. Expected {segment_size} bytes at offset {offset}, but file only has {len(data)} bytes. Truncating stroke.', file=sys.stderr)
+                            break
+
+                        try:
+                            xpos, ypos, pressure, tilt, i_unk2, j_unk2 = struct.unpack_from(
+                                fmt, data, offset)
+                            offset += segment_size
+                        except struct.error as e:
+                            if verbose:
+                                print(
+                                    f'Warning: Failed to read segment {segment} of stroke {stroke} in layer {layer}: {e}. Truncating stroke.', file=sys.stderr)
+                            break
+
+                        # Transform coordinates
+                        ratio = (y_width/x_width)/(1872/1404)
+                        if ratio > 1:
+                            xpos = ratio*((xpos*x_width)/1404)
+                            ypos = (ypos*y_width)/1872
+                        else:
+                            xpos = (xpos*x_width)/1404
+                            ypos = (1/ratio)*(ypos*y_width)/1872
+
+                        # Handle dynamic width pens
+                        if pen == 0:
+                            if segment % 8 == 0:
+                                segment_width = (
+                                    5. * tilt) * (6. * width - 10) * (1 + 2. * pressure * pressure * pressure)
+                                output.write('" />\n<polyline style="fill:none;stroke:{};stroke-width:{:.3f}" points="'.format(
+                                    stroke_colour[colour], segment_width))
+                        elif pen == 1:
+                            if segment % 8 == 0:
+                                segment_width = (
+                                    10. * tilt - 2) * (8. * width - 14)
+                                segment_opacity = (
+                                    pressure - .2) * (pressure - .2)
+                                output.write('" /><polyline style="fill:none;stroke:{};stroke-width:{:.3f};opacity:{:.3f}" points="'.format(
+                                    stroke_colour[colour], segment_width, segment_opacity))
+
+                        output.write('{:.3f},{:.3f} '.format(xpos, ypos))
+
+                    output.write('" />\n')
+
+            output.write('</svg>')
+
+        if verbose:
+            print(f"Successfully converted to {output_name}", file=sys.stderr)
+
+    except Exception as e:
+        abort(f'Failed to write output file: {e}')
+
+
+if __name__ == "__main__":
+    main()
