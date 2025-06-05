@@ -114,7 +114,9 @@ export class RemarkableExplorer implements vscode.TreeDataProvider<RemarkableFil
 
         // Handle expanding a folder by finding its children dynamically
         if (element.uuid && element.contextValue === 'folder') {
-            this.outputChannel.appendLine(`Expanding folder: ${element.label} (${element.uuid})`);
+            this.outputChannel.appendLine(`=== EXPANDING FOLDER: ${element.label} (${element.uuid}) ===`);
+            this.outputChannel.show(); // Make sure we see this
+            vscode.window.showInformationMessage(`Expanding folder: ${element.label}`);
             
             // Find all documents that have this folder as parent
             const children: RemarkableFileItem[] = [];
@@ -133,6 +135,7 @@ export class RemarkableExplorer implements vscode.TreeDataProvider<RemarkableFil
             }
             
             this.outputChannel.appendLine(`Returning ${children.length} children for folder ${element.label}`);
+            vscode.window.showInformationMessage(`Found ${children.length} items in ${element.label}`);
             return children;
         }
 
@@ -204,7 +207,7 @@ export class RemarkableExplorer implements vscode.TreeDataProvider<RemarkableFil
 
     private async getTrashDocuments(): Promise<RemarkableFileItem[]> {
         const trashedDocs = Array.from(this.documents.values())
-            .filter(doc => doc.deleted)
+            .filter(doc => doc.deleted || doc.parent === 'trash')
             .map(doc => new RemarkableFileItem(
                 doc.visibleName,
                 `Deleted ${doc.type}`,
@@ -212,6 +215,7 @@ export class RemarkableExplorer implements vscode.TreeDataProvider<RemarkableFil
                 'deleted'
             ));
 
+        this.outputChannel.appendLine(`Found ${trashedDocs.length} items in trash`);
         return trashedDocs.length > 0 ? trashedDocs : [
             new RemarkableFileItem(
                 'No deleted documents',
@@ -281,20 +285,33 @@ export class RemarkableExplorer implements vscode.TreeDataProvider<RemarkableFil
 
     private getParsedDocuments(): RemarkableFileItem[] {
         this.outputChannel.appendLine('=== getParsedDocuments() called ===');
+        this.outputChannel.show(); // Force the output channel to be visible
+        
         const rootItems: RemarkableFileItem[] = [];
         const folders = new Map<string, RemarkableFileItem>();
         
         // Debug: Log all documents and their properties
         this.outputChannel.appendLine('All loaded documents:');
+        let deletedCount = 0;
+        let folderCount = 0;
+        let docCount = 0;
+        
         for (const [uuid, doc] of this.documents) {
             this.outputChannel.appendLine(`  ${doc.visibleName} - Type: ${doc.type}, Deleted: ${doc.deleted}, Parent: ${doc.parent || 'none'}`);
+            if (doc.deleted) deletedCount++;
+            if (doc.type === 'CollectionType') folderCount++;
+            else docCount++;
         }
+        
+        this.outputChannel.appendLine(`Summary: ${folderCount} folders, ${docCount} documents, ${deletedCount} deleted`);
+        vscode.window.showInformationMessage(`Documents: ${folderCount} folders, ${docCount} docs, ${deletedCount} deleted`);
         
         // First pass: create folders
         this.outputChannel.appendLine('Creating folders...');
         for (const [uuid, doc] of this.documents) {
-            if (doc.type === 'CollectionType' && !doc.deleted) {
-                this.outputChannel.appendLine(`  Creating folder: ${doc.visibleName}`);
+            // Skip folders that are deleted or in trash
+            if (doc.type === 'CollectionType' && !doc.deleted && doc.parent !== 'trash') {
+                this.outputChannel.appendLine(`  Creating folder: ${doc.visibleName} (${uuid})`);
                 const folderItem = new RemarkableFileItem(
                     doc.visibleName,
                     'Folder',
@@ -303,13 +320,16 @@ export class RemarkableExplorer implements vscode.TreeDataProvider<RemarkableFil
                 );
                 folderItem.uuid = uuid;
                 folders.set(uuid, folderItem);
+            } else if (doc.type === 'CollectionType' && (doc.deleted || doc.parent === 'trash')) {
+                this.outputChannel.appendLine(`  Skipping folder: ${doc.visibleName} (deleted: ${doc.deleted}, parent: ${doc.parent})`);
             }
         }
         
         // Second pass: create documents and organize hierarchy
         this.outputChannel.appendLine('Organizing documents...');
         for (const [uuid, doc] of this.documents) {
-            if (doc.type !== 'CollectionType' && !doc.deleted) {
+            // Skip deleted documents AND documents in trash
+            if (doc.type !== 'CollectionType' && !doc.deleted && doc.parent !== 'trash') {
                 this.outputChannel.appendLine(`  Processing document: ${doc.visibleName}, Parent: ${doc.parent || 'none'}`);
                 const docItem = new RemarkableFileItem(
                     doc.visibleName,
@@ -321,19 +341,23 @@ export class RemarkableExplorer implements vscode.TreeDataProvider<RemarkableFil
                 
                 if (doc.parent && folders.has(doc.parent)) {
                     // Add to parent folder
-                    this.outputChannel.appendLine(`    Adding to parent folder`);
+                    this.outputChannel.appendLine(`    Adding to parent folder (found folder)`);
                     const parentFolder = folders.get(doc.parent)!;
                     if (!parentFolder.children) {
                         parentFolder.children = [];
                     }
                     parentFolder.children.push(docItem);
+                } else if (doc.parent && doc.parent !== '') {
+                    // Parent exists but we don't have it as a folder - might be a nested folder
+                    this.outputChannel.appendLine(`    Parent ${doc.parent} not found in folders - adding to root`);
+                    rootItems.push(docItem);
                 } else {
                     // Add to root
-                    this.outputChannel.appendLine(`    Adding to root`);
+                    this.outputChannel.appendLine(`    Adding to root (no parent)`);
                     rootItems.push(docItem);
                 }
-            } else if (doc.deleted) {
-                this.outputChannel.appendLine(`  Skipping deleted document: ${doc.visibleName}`);
+            } else if (doc.deleted || doc.parent === 'trash') {
+                this.outputChannel.appendLine(`  Skipping document: ${doc.visibleName} (deleted: ${doc.deleted}, parent: ${doc.parent})`);
             }
         }
         
