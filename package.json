@@ -1,0 +1,173 @@
+{
+  "name": "remarkable-manager",
+  "displayName": "reMarkable Manager",
+  "description": "Manage your reMarkable Paper Pro files directly from VSCode",
+  "version": "0.0.1",
+  "publisher": "remarkable-tools",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/remarkable-tools/remarkable-vscode-plugin.git"
+  },
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:remarkableExplorer"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "id": "remarkableExplorer",
+          "name": "reMarkable"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "remarkableExplorer.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "remarkableExplorer.connect",
+        "title": "Connect to reMarkable",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "remarkableExplorer.disconnect",
+        "title": "Disconnect",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "remarkableExplorer.toggleView",
+        "title": "Toggle Raw/Parsed View",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "remarkableExplorer.backup",
+        "title": "Backup to Local",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "remarkableExplorer.rename",
+        "title": "Rename",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "remarkableExplorer.export",
+        "title": "Export",
+        "icon": "$(export)"
+      },
+      {
+        "command": "remarkableExplorer.openSettings",
+        "title": "Settings",
+        "icon": "$(settings-gear)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "remarkableExplorer.refresh",
+          "when": "view == remarkableExplorer",
+          "group": "navigation@1"
+        },
+        {
+          "command": "remarkableExplorer.connect",
+          "when": "view == remarkableExplorer && !remarkableExplorer.connected",
+          "group": "navigation@2"
+        },
+        {
+          "command": "remarkableExplorer.disconnect",
+          "when": "view == remarkableExplorer && remarkableExplorer.connected",
+          "group": "navigation@2"
+        },
+        {
+          "command": "remarkableExplorer.toggleView",
+          "when": "view == remarkableExplorer && remarkableExplorer.connected",
+          "group": "navigation@3"
+        },
+        {
+          "command": "remarkableExplorer.openSettings",
+          "when": "view == remarkableExplorer",
+          "group": "navigation@4"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "remarkableExplorer.backup",
+          "when": "view == remarkableExplorer && viewItem == document",
+          "group": "remarkable@1"
+        },
+        {
+          "command": "remarkableExplorer.rename",
+          "when": "view == remarkableExplorer && viewItem == document",
+          "group": "remarkable@2"
+        },
+        {
+          "command": "remarkableExplorer.export",
+          "when": "view == remarkableExplorer && viewItem == document",
+          "group": "remarkable@3"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "reMarkable Manager",
+      "properties": {
+        "remarkableManager.connection.host": {
+          "type": "string",
+          "default": "10.11.99.1",
+          "description": "reMarkable tablet IP address or hostname"
+        },
+        "remarkableManager.connection.username": {
+          "type": "string",
+          "default": "root",
+          "description": "SSH username for connecting to reMarkable"
+        },
+        "remarkableManager.connection.password": {
+          "type": "string",
+          "default": "",
+          "description": "SSH password (leave empty to use SSH keys)"
+        },
+        "remarkableManager.paths.documents": {
+          "type": "string",
+          "default": ".local/share/remarkable/xochitl",
+          "description": "Path to documents directory on reMarkable"
+        },
+        "remarkableManager.paths.templates": {
+          "type": "string",
+          "default": ".local/share/remarkable/templates",
+          "description": "Path to templates directory on reMarkable"
+        },
+        "remarkableManager.backup.localPath": {
+          "type": "string",
+          "default": "",
+          "description": "Local directory for backups (leave empty to prompt each time)"
+        },
+        "remarkableManager.view.showRawFiles": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show raw GUID-based file structure instead of parsed names"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.74.0",
+    "@types/node": "16.x",
+    "@types/ssh2": "^1.11.0",
+    "typescript": "^4.9.4"
+  },
+  "dependencies": {
+    "ssh2": "^1.11.0"
+  }
+}
