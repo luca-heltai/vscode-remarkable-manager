@@ -12,31 +12,49 @@ export class RemarkableExplorer implements vscode.TreeDataProvider<RemarkableFil
 
     constructor(
         private context: vscode.ExtensionContext,
-        private connectionManager: RemarkableConnectionManager
+        private connectionManager: RemarkableConnectionManager,
+        private outputChannel: vscode.OutputChannel
     ) {
+        this.outputChannel.appendLine('RemarkableExplorer constructor called');
+        console.log('RemarkableExplorer constructor called');
         this.showRawFiles = vscode.workspace.getConfiguration('remarkableManager').get('view.showRawFiles', false);
+        this.outputChannel.appendLine(`Initial connection state: ${this.isConnected}`);
+        console.log(`Initial connection state: ${this.isConnected}`);
         
         // Listen to connection events
         this.connectionManager.on('connected', () => {
+            this.outputChannel.appendLine('RemarkableExplorer: Connection established');
+            console.log('RemarkableExplorer: Connection established');
             this.isConnected = true;
             this.refresh();
         });
         
         this.connectionManager.on('disconnected', () => {
+            this.outputChannel.appendLine('RemarkableExplorer: Disconnected');
+            console.log('RemarkableExplorer: Disconnected');
             this.isConnected = false;
             this.refresh();
         });
         
         this.connectionManager.on('error', (err: Error) => {
+            this.outputChannel.appendLine(`RemarkableExplorer: Connection error: ${err.message}`);
+            console.log('RemarkableExplorer: Connection error:', err.message);
             vscode.window.showErrorMessage(`Connection error: ${err.message}`);
         });
+        
+        this.outputChannel.appendLine('RemarkableExplorer constructor finished - event listeners registered');
     }
 
     getTreeItem(element: RemarkableFileItem): vscode.TreeItem {
+        this.outputChannel.appendLine(`getTreeItem called for: ${element.label}`);
+        console.log(`getTreeItem called for: ${element.label}`);
         return element;
     }
 
     async getChildren(element?: RemarkableFileItem): Promise<RemarkableFileItem[]> {
+        this.outputChannel.appendLine(`getChildren called for: ${element ? element.label : 'ROOT'}`);
+        console.log(`getChildren called for: ${element ? element.label : 'ROOT'}`);
+        
         if (!this.isConnected) {
             return [new RemarkableFileItem(
                 'Not connected',
@@ -71,6 +89,11 @@ export class RemarkableExplorer implements vscode.TreeDataProvider<RemarkableFil
         }
 
         if (element.label === 'Documents') {
+            this.outputChannel.appendLine('Documents folder clicked - loading documents...');
+            this.outputChannel.appendLine(`Connection state: ${this.isConnected}`);
+            this.outputChannel.appendLine(`Connection manager connected: ${this.connectionManager.isConnected()}`);
+            console.log('Documents folder clicked - loading documents...');
+            vscode.window.showInformationMessage('Loading documents...');
             return this.getDocuments();
         }
 
@@ -82,20 +105,68 @@ export class RemarkableExplorer implements vscode.TreeDataProvider<RemarkableFil
             return this.getTrashDocuments();
         }
 
+        // Handle expanding folders or documents with children
+        if (element.uuid && element.children) {
+            this.outputChannel.appendLine(`Expanding element: ${element.label} with ${element.children.length} children`);
+            console.log(`Expanding element: ${element.label} with ${element.children.length} children`);
+            return element.children;
+        }
+
+        // Handle expanding a folder by finding its children dynamically
+        if (element.uuid && element.contextValue === 'folder') {
+            this.outputChannel.appendLine(`Expanding folder: ${element.label} (${element.uuid})`);
+            
+            // Find all documents that have this folder as parent
+            const children: RemarkableFileItem[] = [];
+            for (const [uuid, doc] of this.documents) {
+                if (doc.parent === element.uuid && !doc.deleted) {
+                    this.outputChannel.appendLine(`  Found child: ${doc.visibleName} (${doc.type})`);
+                    const childItem = new RemarkableFileItem(
+                        doc.visibleName,
+                        doc.type,
+                        doc.type === 'CollectionType' ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
+                        doc.type === 'CollectionType' ? 'folder' : 'document'
+                    );
+                    childItem.uuid = uuid;
+                    children.push(childItem);
+                }
+            }
+            
+            this.outputChannel.appendLine(`Returning ${children.length} children for folder ${element.label}`);
+            return children;
+        }
+
+        this.outputChannel.appendLine(`No children found for element: ${element.label}`);
+        console.log(`No children found for element: ${element.label}`);
         return [];
     }
 
     private async getDocuments(): Promise<RemarkableFileItem[]> {
+        this.outputChannel.appendLine('=== getDocuments() called ===');
         try {
+            this.outputChannel.appendLine('Loading documents...');
+            console.log('Loading documents...');
             await this.loadDocuments();
+            this.outputChannel.appendLine(`Loaded ${this.documents.size} documents`);
+            console.log(`Loaded ${this.documents.size} documents`);
             
             if (this.showRawFiles) {
-                return this.getRawFileList();
+                this.outputChannel.appendLine('Using raw files view');
+                const rawFiles = this.getRawFileList();
+                this.outputChannel.appendLine(`Returning ${rawFiles.length} raw files`);
+                console.log(`Returning ${rawFiles.length} raw files`);
+                return rawFiles;
             } else {
-                return this.getParsedDocuments();
+                this.outputChannel.appendLine('Using parsed documents view');
+                const parsedDocs = this.getParsedDocuments();
+                this.outputChannel.appendLine(`Returning ${parsedDocs.length} parsed documents`);
+                console.log(`Returning ${parsedDocs.length} parsed documents`);
+                return parsedDocs;
             }
         } catch (error) {
+            this.outputChannel.appendLine(`Error loading documents: ${error}`);
             console.error('Error loading documents:', error);
+            vscode.window.showErrorMessage(`Error loading documents: ${error}`);
             return [new RemarkableFileItem(
                 'Error loading documents',
                 `${error}`,
@@ -155,8 +226,12 @@ export class RemarkableExplorer implements vscode.TreeDataProvider<RemarkableFil
         const config = vscode.workspace.getConfiguration('remarkableManager');
         const documentsPath = config.get('paths.documents', '.local/share/remarkable/xochitl');
         
+        console.log(`Loading documents from: ${documentsPath}`);
         const files = await this.connectionManager.listFiles(documentsPath);
-        const metadataFiles = files.filter(file => file.filename.endsWith('.metadata'));
+        console.log(`Found ${files.length} files in documents directory`);
+        
+        const metadataFiles = files.filter((file: any) => file.filename.endsWith('.metadata'));
+        console.log(`Found ${metadataFiles.length} metadata files`);
         
         this.documents.clear();
         
@@ -164,6 +239,7 @@ export class RemarkableExplorer implements vscode.TreeDataProvider<RemarkableFil
             try {
                 const uuid = file.filename.replace('.metadata', '');
                 const metadataPath = `${documentsPath}/${file.filename}`;
+                console.log(`Reading metadata for: ${uuid}`);
                 const metadataContent = await this.connectionManager.readFile(metadataPath);
                 const metadata = JSON.parse(metadataContent);
                 
@@ -178,11 +254,14 @@ export class RemarkableExplorer implements vscode.TreeDataProvider<RemarkableFil
                     metadata
                 };
                 
+                console.log(`Loaded document: ${document.visibleName} (${document.type})`);
                 this.documents.set(uuid, document);
             } catch (error) {
                 console.error(`Error parsing metadata for ${file.filename}:`, error);
             }
         }
+        
+        console.log(`Total documents loaded: ${this.documents.size}`);
     }
 
     private getRawFileList(): RemarkableFileItem[] {
@@ -201,12 +280,21 @@ export class RemarkableExplorer implements vscode.TreeDataProvider<RemarkableFil
     }
 
     private getParsedDocuments(): RemarkableFileItem[] {
+        this.outputChannel.appendLine('=== getParsedDocuments() called ===');
         const rootItems: RemarkableFileItem[] = [];
         const folders = new Map<string, RemarkableFileItem>();
         
+        // Debug: Log all documents and their properties
+        this.outputChannel.appendLine('All loaded documents:');
+        for (const [uuid, doc] of this.documents) {
+            this.outputChannel.appendLine(`  ${doc.visibleName} - Type: ${doc.type}, Deleted: ${doc.deleted}, Parent: ${doc.parent || 'none'}`);
+        }
+        
         // First pass: create folders
+        this.outputChannel.appendLine('Creating folders...');
         for (const [uuid, doc] of this.documents) {
             if (doc.type === 'CollectionType' && !doc.deleted) {
+                this.outputChannel.appendLine(`  Creating folder: ${doc.visibleName}`);
                 const folderItem = new RemarkableFileItem(
                     doc.visibleName,
                     'Folder',
@@ -219,8 +307,10 @@ export class RemarkableExplorer implements vscode.TreeDataProvider<RemarkableFil
         }
         
         // Second pass: create documents and organize hierarchy
+        this.outputChannel.appendLine('Organizing documents...');
         for (const [uuid, doc] of this.documents) {
             if (doc.type !== 'CollectionType' && !doc.deleted) {
+                this.outputChannel.appendLine(`  Processing document: ${doc.visibleName}, Parent: ${doc.parent || 'none'}`);
                 const docItem = new RemarkableFileItem(
                     doc.visibleName,
                     doc.type,
@@ -231,6 +321,7 @@ export class RemarkableExplorer implements vscode.TreeDataProvider<RemarkableFil
                 
                 if (doc.parent && folders.has(doc.parent)) {
                     // Add to parent folder
+                    this.outputChannel.appendLine(`    Adding to parent folder`);
                     const parentFolder = folders.get(doc.parent)!;
                     if (!parentFolder.children) {
                         parentFolder.children = [];
@@ -238,24 +329,30 @@ export class RemarkableExplorer implements vscode.TreeDataProvider<RemarkableFil
                     parentFolder.children.push(docItem);
                 } else {
                     // Add to root
+                    this.outputChannel.appendLine(`    Adding to root`);
                     rootItems.push(docItem);
                 }
+            } else if (doc.deleted) {
+                this.outputChannel.appendLine(`  Skipping deleted document: ${doc.visibleName}`);
             }
         }
         
         // Add folders to root if they have no parent or their parent doesn't exist
+        this.outputChannel.appendLine('Adding folders to root...');
         for (const [uuid, folder] of folders) {
             const doc = this.documents.get(uuid)!;
             if (!doc.parent || !folders.has(doc.parent)) {
+                this.outputChannel.appendLine(`  Adding folder to root: ${folder.label}`);
                 rootItems.push(folder);
             }
         }
         
+        this.outputChannel.appendLine(`Final result: ${rootItems.length} root items`);
         return rootItems;
     }
 
     public refresh(): void {
-        this._onDidChangeTreeData.fire();
+        this._onDidChangeTreeData.fire(undefined);
     }
 
     public async connect(): Promise<void> {
